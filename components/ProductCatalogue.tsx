@@ -1,20 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import Row from "react-bootstrap/Row";
 import Col from "react-bootstrap/Col";
 import Card from "react-bootstrap/Card";
 import Form from "react-bootstrap/Form";
 import Button from "react-bootstrap/Button";
 import Alert from "react-bootstrap/Alert";
+import { productImageSrc } from "@/lib/product";
 
 type Product = {
   id: string;
   name: string;
   description: string;
   price: number;
-  imageUrl: string;
+  imageUrl: string | null;
   category: string;
 };
 
@@ -25,7 +25,6 @@ export default function ProductCatalogue({
   products: Product[];
   remainingBudget: number;
 }) {
-  const router = useRouter();
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -68,8 +67,9 @@ export default function ProductCatalogue({
       return;
     }
 
-    router.push("/orders");
-    router.refresh();
+    // A full navigation (rather than router.push) so the destination always
+    // gets a fresh server render — no stale client-router cache to worry about.
+    window.location.href = "/orders";
   }
 
   return (
@@ -87,7 +87,11 @@ export default function ProductCatalogue({
         {products.map((product) => (
           <Col key={product.id}>
             <Card className="h-100">
-              <Card.Img variant="top" src={product.imageUrl} alt={product.name} />
+              <Card.Img
+                variant="top"
+                src={productImageSrc(product)}
+                alt={product.name}
+              />
               <Card.Body className="d-flex flex-column">
                 <Card.Subtitle className="mb-1 text-muted small">
                   {product.category}

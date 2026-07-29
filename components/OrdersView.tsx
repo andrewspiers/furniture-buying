@@ -69,7 +69,13 @@ export default function OrdersView({
           <Card.Body>
             <div className="d-flex justify-content-between">
               <Card.Title className="h6">
-                Order placed {new Date(order.createdAt).toLocaleString()}
+                Order placed{" "}
+                {new Date(order.createdAt).toLocaleString("en-US", {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                  timeZone: "UTC",
+                })}{" "}
+                UTC
               </Card.Title>
               <strong>${order.total.toFixed(2)}</strong>
             </div>

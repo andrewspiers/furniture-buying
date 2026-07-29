@@ -119,31 +119,117 @@ and could be bypassed).
 
 ## Data model
 
-Defined in `prisma/schema.prisma`, four tables:
+Derived from the functional requirements in [requirements.md](requirements.md)
+— a buyer, a catalogue, and the orders a buyer places against their
+budget — and implemented in `prisma/schema.prisma` as four tables:
 
-```
-User            Product           Order              OrderItem
-──────          ───────           ─────              ─────────
-id              id                id                 id
-name            name              userId  ──────►    orderId  ──────►
-email (unique)  description       total              productId ─────►
-passwordHash    price             createdAt           quantity
-budget          imageUrl                               unitPrice
-orders[]        category
-                orderItems[]
+```mermaid
+classDiagram
+    class User {
+        +id
+        +name
+        +email
+        +passwordHash
+        +budget
+    }
+    class Product {
+        +id
+        +sourceId
+        +sourceUrl
+        +name
+        +description
+        +price
+        +category
+        +imageUrl
+        +image
+        +imageMimeType
+    }
+    class Order {
+        +id
+        +userId
+        +total
+        +createdAt
+    }
+    class OrderItem {
+        +id
+        +orderId
+        +productId
+        +quantity
+        +unitPrice
+    }
+
+    User "1" --> "*" Order : places
+    Order "1" --> "*" OrderItem : contains
+    Product "1" --> "*" OrderItem : appears in
 ```
 
-- `User.budget` is a single fixed total (no time period/reset logic —
-  out of scope for Day 1).
-- `OrderItem.unitPrice` is a **snapshot** of the product's price at
-  purchase time, not a live reference — so past orders stay accurate
-  even if a product's price changes later.
-- Remaining budget is *derived*, not stored: `budget - sum(orders.total)`.
-  Computed on every read in `lib/budget.ts`; there's no risk of it
-  drifting out of sync since it's never written directly.
-- Migrations live in `prisma/migrations/`; the SQLite file itself
-  (`prisma/dev.db`) is git-ignored and regenerated locally with
-  `npx prisma migrate dev && npm run db:seed`.
+**In plain English:**
+
+- **User** is the buyer — the requirements call for one buyer role, no
+  admin/manager, so there's a single table rather than separate
+  buyer/admin types. `budget` is the one fixed number everything else
+  gets checked against; `passwordHash` (not a plaintext password) is
+  what login checks against.
+- **Product** is a single furniture item from the catalogue — its
+  name, description, price, image, and category, i.e. everything the
+  requirements say a buyer needs to see while browsing. Products are
+  imported from an external MongoDB catalogue (`prisma/import-catalog.ts`)
+  rather than hand-written; `sourceId`/`sourceUrl` trace each row back to
+  its original MongoDB document, so re-running the import is an idempotent
+  upsert rather than a duplicate insert. A product can come from either
+  source: `imageUrl` holds an external image link (used by any
+  hand-written/placeholder product), while `image`/`imageMimeType` hold
+  the raw photo bytes for imported products, served through
+  `app/api/products/[id]/image/route.ts` rather than embedded inline —
+  see "Serving product images" below.
+- **Order** is what gets created when a buyer submits a cart — one row
+  per checkout, holding the total cost and when it happened. It belongs
+  to exactly one User; a User can have many Orders (their history).
+- **OrderItem** is one line within an order — "2 of the Oakwood Dining
+  Table at $899 each." An Order needs this as a separate table (rather
+  than one row per product) because a single order can contain several
+  different products, each with its own quantity.
+- `OrderItem.unitPrice` copies the product's price *at the moment of
+  purchase*, rather than pointing back at `Product.price` live. This
+  matters for the same reason a paper receipt doesn't change if the
+  shop's prices go up tomorrow — past orders in the requirements'
+  "order history" feature need to stay accurate forever.
+- There's no separate "remaining budget" table — the requirement is
+  satisfied by *deriving* it (`budget` minus the sum of the user's past
+  `Order.total`s) every time it's needed, in `lib/budget.ts`, rather
+  than storing a number that could drift out of sync.
+
+Two things intentionally don't have their own table because the
+requirements don't call for them yet: there's no `Cart` (quantities
+only exist in the browser until checkout, per the "no persistent
+server-side cart" scope note), and there's no `BudgetPeriod` (budget is
+a single lifetime figure, not something that resets monthly — see the
+open questions in requirements.md).
+
+Migrations live in `prisma/migrations/`; the SQLite file itself
+(`prisma/dev.db`) is git-ignored and regenerated locally with
+`npx prisma migrate dev && npm run db:seed`.
+
+### Serving product images
+
+The imported catalogue's 762 product photos are real JPEGs (~60KB each,
+~70MB total) stored as raw bytes in `Product.image`. Two things follow
+from that:
+
+- **The catalogue listing query never selects `image`.**
+  `app/catalogue/page.tsx` uses an explicit `select` of just the fields
+  the grid needs (name, price, category, etc.). Without that, loading the
+  catalogue would pull ~70MB of image bytes into memory on every request
+  just to list products — the point of `select` here isn't style, it's
+  avoiding that.
+- **Each `<img>` points at its own route**, not an inline data URI:
+  `lib/product.ts`'s `productImageSrc()` returns
+  `/api/products/{id}/image` for any product without an external
+  `imageUrl`. `app/api/products/[id]/image/route.ts` fetches just that
+  one row's `image`/`imageMimeType` and streams it back with a
+  long-lived `Cache-Control` header — so the browser loads 762 small
+  image requests in parallel (normal `<img>` behavior) instead of one
+  enormous HTML response with all of them inlined.
 
 ## Directory reference
 
@@ -154,6 +240,7 @@ orders[]        category
 | `app/orders/page.tsx` | Server component — fetches order history + budget |
 | `app/api/auth/[...nextauth]/route.ts` | Delegates to NextAuth's handlers |
 | `app/api/orders/route.ts` | The only route that writes `Order`/`OrderItem` rows |
+| `app/api/products/[id]/image/route.ts` | Streams one product's photo bytes by id |
 | `components/ProductCatalogue.tsx` | Client — quantity selection, live total, submits order |
 | `components/OrdersView.tsx` | Client — renders order history + budget bar |
 | `components/NavBar.tsx` | Client — top nav, shows session user, sign out |
@@ -161,8 +248,10 @@ orders[]        category
 | `lib/db.ts` | Shared Prisma client (single instance, reused across hot reloads) |
 | `lib/auth.ts` | NextAuth configuration |
 | `lib/budget.ts` | `getBudgetSummary()` — the one place remaining budget is computed |
+| `lib/product.ts` | `productImageSrc()` — picks external `imageUrl` vs. the image route |
 | `prisma/schema.prisma` | Data model |
-| `prisma/seed.ts` | Demo user + 8 sample products |
+| `prisma/seed.ts` | Demo user + 8 placeholder products (fallback if `import-catalog.ts` hasn't been run) |
+| `prisma/import-catalog.ts` | Imports the real 762-item catalogue from MongoDB, replacing unused placeholders |
 | `proxy.ts` | Route protection (login gate) |
 
 ## Deliberate non-features

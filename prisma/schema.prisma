@@ -18,14 +18,18 @@ model User {
 }
 
 model Product {
-  id          String      @id @default(cuid())
-  name        String
-  description String
-  price       Float
-  imageUrl    String
-  category    String
-  orderItems  OrderItem[]
-  createdAt   DateTime    @default(now())
+  id            String      @id @default(cuid())
+  sourceId      String?     @unique
+  sourceUrl     String?
+  name          String
+  description   String
+  price         Float
+  category      String
+  imageUrl      String?
+  image         Bytes?
+  imageMimeType String?
+  orderItems    OrderItem[]
+  createdAt     DateTime    @default(now())
 }
 
 model Order {

@@ -8,7 +8,17 @@ export default async function CataloguePage() {
   const userId = session!.user.id;
 
   const [products, { remaining }] = await Promise.all([
-    prisma.product.findMany({ orderBy: { category: "asc" } }),
+    prisma.product.findMany({
+      orderBy: { category: "asc" },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        price: true,
+        category: true,
+        imageUrl: true,
+      },
+    }),
     getBudgetSummary(userId),
   ]);
 

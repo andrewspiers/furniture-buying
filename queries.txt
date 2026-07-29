@@ -1,0 +1,10 @@
+-- Run against prisma/dev.db, e.g.:
+--   sqlite3 prisma/dev.db < queries.txt
+-- or paste a single query into `sqlite3 prisma/dev.db`.
+
+-- Retrieve all users and their password hashes.
+-- Note: `passwordHash` is a one-way bcrypt hash of the password, not the
+-- password itself — there is no column storing the actual plaintext
+-- password anywhere in the database, so this cannot be used to recover
+-- what a user typed at login.
+SELECT id, name, email, passwordHash FROM User;

@@ -11,7 +11,7 @@ export default async function OrdersPage() {
     include: {
       orders: {
         orderBy: { createdAt: "desc" },
-        include: { items: { include: { product: true } } },
+        include: { items: { include: { product: { select: { name: true } } } } },
       },
     },
   });

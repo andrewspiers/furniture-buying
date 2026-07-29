@@ -24,6 +24,7 @@ export async function POST(request: Request) {
 
   const products = await prisma.product.findMany({
     where: { id: { in: wanted.map((item) => item.productId) } },
+    select: { id: true, price: true },
   });
   const productById = new Map(products.map((product) => [product.id, product]));
 
