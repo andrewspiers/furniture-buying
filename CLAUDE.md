@@ -13,11 +13,15 @@ the user would have to maintain themselves.
 
 ## Core features (Day 1 scope)
 - Login (single user or a small fixed set of users — no self-signup needed)
-- Product catalogue: list of furniture items with name, price, image, description
+- Product catalogue: category/name/price for every product, fetched live
+  from the Cognitivo furniture shop API (not our own database — see
+  "Live catalogue & balance" below)
 - Place an order: add items to an order/cart
-- Budget tracking: user has a budget; the app shows remaining budget and
-  prevents (or warns on) orders that would exceed it
-- Order history: see past orders
+- Budget tracking: the app shows the buyer's real balance (fetched live from
+  the Cognitivo training API, not tracked in our own database) and prevents
+  orders that would exceed it
+- Order history: see past orders (placed through this app; separate from
+  the real external balance/ledger — see "Live catalogue & balance" below)
 
 ## Explicitly out of scope for Day 1
 - Payments/checkout integration
@@ -41,8 +45,10 @@ the user would have to maintain themselves.
 - **NextAuth.js (Auth.js)**, Credentials provider — login/session handling
   via a well-tested library rather than custom-built auth.
 - **MongoDB driver**, used only by `prisma/import-catalog.ts` (a one-off
-  script, not part of the running app) to pull the real product catalogue
-  from an external MongoDB collection into our own SQLite database.
+  script, not part of the running app, not required to run the app) to
+  optionally pre-populate the local `Product` table from an external
+  MongoDB collection — see "Live catalogue & balance" below for why that
+  table still exists even though the app displays a live catalogue.
 
 ## Running the app
 ```
@@ -51,7 +57,7 @@ npm install            # first time only
 npm run db:seed        # first time only — creates dev.db with demo user
 npm run dev             # starts the app at http://localhost:3000
 ```
-Demo login: `buyer@example.com` / `password123` (budget: $2000).
+Demo login: `buyer@example.com` / `password123`.
 
 The database is the file `prisma/dev.db`. To wipe it and start over, delete
 that file, then run the migrate + seed commands again:
@@ -60,29 +66,56 @@ npx prisma migrate dev
 npm run db:seed
 ```
 
-## Product catalogue data source
-The catalogue (764 products) is imported from a MongoDB collection, not
-hand-written — see `prisma/import-catalog.ts`. Set `MONGODB_URI` in `.env`
-(real credentials go in `.env`, never in `.env.example` or any committed
-file) and run:
-```
-npm run db:import-catalog
-```
-This upserts products keyed by their source `item_id` (safe to re-run) and
-removes the old hand-written placeholder products — except any that are
-already referenced by a real order, which are kept so order history stays
-accurate. Product photos are stored as raw bytes in the `image` column
-(not external URLs) and served through `app/api/products/[id]/image/route.ts`;
-the catalogue listing query deliberately excludes that column (`select`,
-not the full row) so browsing the catalogue doesn't pull ~70MB of image
-data on every page load.
+## Live catalogue & balance (Cognitivo API)
+The catalogue browsing page and the "your balance" figure both come live
+from the Cognitivo training API, not from our own database — see
+`lib/cognitivoApi.ts`. Credentials (`COGNITIVO_BASE_URL` /
+`COGNITIVO_API_KEY` / `COGNITIVO_USERNAME`) live in `.env` only, never
+committed.
+
+- **Browsing** uses `GET /catalogue/search-index` (`getSearchIndexProducts()`)
+  — a lightweight listing endpoint meant for exactly this, returning
+  category/name/price for every product with no images. **Do not** use the
+  plain `GET /catalogue` endpoint for browsing: it returns full images for
+  every product and has been observed to hang indefinitely (see the
+  Gotchas below and `api-testing/get-catalogue.sh`, which needs
+  `--max-time` to avoid hanging forever).
+- **Balance** uses `GET /users/{user_id}` (`getRealBalance()`), checked
+  both when displaying the balance and, authoritatively, when an order is
+  placed.
+
+Both pages that call these (`app/catalogue/page.tsx`, `app/orders/page.tsx`)
+degrade to a visible error state rather than crashing if the API call
+fails, and `ProductCatalogue.tsx` blocks ordering (rather than guessing)
+if the balance couldn't be loaded.
+
+**Why Prisma's `Product` table still exists**: `OrderItem` has a foreign
+key to a local `Product` row (Prisma/SQLite enforce this at the DB level),
+so placing an order still needs a matching local row — `app/api/orders/route.ts`
+looks one up by `sourceId` (the Cognitivo `item_id`) and creates it on the
+fly from the live catalogue entry if it's missing, rather than failing the
+order. `prisma/import-catalog.ts` (pulls the same catalogue from a MongoDB
+collection into this table) still works as an optional way to pre-populate
+these rows, but the app no longer reads from this table to *display* the
+catalogue — only to satisfy that foreign key. `User.budget` is now
+vestigial for the same reason `Product.image`/`imageMimeType`/`imageUrl`
+are — nothing displays them anymore, but the columns weren't dropped
+without asking, since schema changes are hard to reverse.
+
+Orders placed through this app are **not** sent to the Cognitivo API's own
+`POST /orders` — they only write to our local `Order`/`OrderItem` tables.
+That means "Spent through this app" (shown on the orders page) and "Your
+balance" (live, external) are two independent numbers; placing an order
+here does not move the real balance. If that's not the intended behavior,
+say so — wiring order placement through to the real ledger is a separate,
+larger change than showing the balance/catalogue live.
 
 ## Folder structure
 - `app/` — pages (`login`, `catalogue`, `orders`) and API routes (`app/api`)
 - `components/` — shared UI (NavBar) and client-side views that render
   react-bootstrap (ProductCatalogue, OrdersView)
 - `lib/` — `db.ts` (Prisma client), `auth.ts` (NextAuth config),
-  `budget.ts` (remaining-budget calculation)
+  `cognitivoApi.ts` (live catalogue + balance lookups)
 - `prisma/` — `schema.prisma` (data shape), `seed.ts` (demo user),
   `import-catalog.ts` (pulls real products from MongoDB)
 - `proxy.ts` — route protection (redirects logged-out users to `/login`);
@@ -118,6 +151,24 @@ data on every page load.
   timezone, browser in another). Fixed by passing an explicit locale
   (`"en-US"`) and `timeZone: "UTC"` in `OrdersView.tsx` so server and
   client always render identical text.
+- **The Cognitivo balance endpoint (`GET /users/{user_id}`) can be slow**
+  (observed several seconds, occasionally longer) since it's derived by
+  summing ledger entries rather than a stored field. `getRealBalance()`
+  uses a 15s timeout and both pages that call it degrade to a visible
+  "balance unavailable" state instead of crashing if it fails — ordering
+  is blocked (not silently allowed) when the balance can't be fetched.
+  Some other endpoints on this API (e.g. plain `GET /catalogue`, as
+  opposed to `/catalogue/search-index`) have been observed hanging
+  indefinitely rather than erroring — always curl with `--max-time` when
+  testing a new endpoint on this API (see `api-testing/`).
+- **Switching the catalogue display to live `search-index` data broke
+  order placement** until the API route was updated to match: the
+  product identifier changed from our own Prisma `Product.id` (a cuid)
+  to the Cognitivo `item_id` (e.g. `"00368814"`), but `OrderItem` still
+  has a foreign key to a local `Product` row. Fixed by resolving
+  `item_id` -> local `Product` via the `sourceId` column (already
+  populated for everything pulled in by `import-catalog.ts`), creating
+  the local row on the fly for anything missing one.
 
 # Progress reports.
 in CLAUDE-PROGRESS.md write a 100 word or less progress report every 10 minutes. 2 newlines between each report.

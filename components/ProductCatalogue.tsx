@@ -1,29 +1,28 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Row from "react-bootstrap/Row";
-import Col from "react-bootstrap/Col";
-import Card from "react-bootstrap/Card";
+import Table from "react-bootstrap/Table";
 import Form from "react-bootstrap/Form";
 import Button from "react-bootstrap/Button";
 import Alert from "react-bootstrap/Alert";
-import { productImageSrc } from "@/lib/product";
 
 type Product = {
-  id: string;
+  itemId: string;
   name: string;
-  description: string;
-  price: number;
-  imageUrl: string | null;
   category: string;
+  price: number;
 };
 
 export default function ProductCatalogue({
   products,
+  productsError,
   remainingBudget,
+  balanceError,
 }: {
   products: Product[];
-  remainingBudget: number;
+  productsError?: string | null;
+  remainingBudget: number | null;
+  balanceError?: string | null;
 }) {
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
@@ -32,17 +31,20 @@ export default function ProductCatalogue({
   const total = useMemo(
     () =>
       products.reduce(
-        (sum, product) => sum + product.price * (quantities[product.id] ?? 0),
+        (sum, product) => sum + product.price * (quantities[product.itemId] ?? 0),
         0
       ),
     [products, quantities]
   );
 
-  const overBudget = total > remainingBudget;
+  // If the real balance couldn't be loaded, don't guess — block ordering
+  // rather than risk allowing (or wrongly blocking) a purchase.
+  const balanceUnavailable = remainingBudget === null;
+  const overBudget = balanceUnavailable || total > remainingBudget;
   const hasItems = total > 0;
 
-  function setQuantity(productId: string, quantity: number) {
-    setQuantities((prev) => ({ ...prev, [productId]: Math.max(0, quantity) }));
+  function setQuantity(itemId: string, quantity: number) {
+    setQuantities((prev) => ({ ...prev, [itemId]: Math.max(0, quantity) }));
   }
 
   async function handlePlaceOrder() {
@@ -51,18 +53,28 @@ export default function ProductCatalogue({
 
     const items = Object.entries(quantities)
       .filter(([, quantity]) => quantity > 0)
-      .map(([productId, quantity]) => ({ productId, quantity }));
+      .map(([itemId, quantity]) => ({ itemId, quantity }));
 
-    const res = await fetch("/api/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+    } catch {
+      setSubmitting(false);
+      setError("Couldn't reach the server. Check your connection and try again.");
+      return;
+    }
 
     setSubmitting(false);
 
     if (!res.ok) {
-      const data = await res.json();
+      // The server always returns JSON on failure, but guard anyway — a
+      // malformed/non-JSON response shouldn't crash the page, just fall
+      // back to a generic message.
+      const data: { error?: string } = await res.json().catch(() => ({}));
       setError(data.error ?? "Something went wrong placing the order.");
       return;
     }
@@ -77,48 +89,46 @@ export default function ProductCatalogue({
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h1 className="h3 mb-0">Catalogue</h1>
         <span className="text-muted">
-          Remaining budget: ${remainingBudget.toFixed(2)}
+          {balanceUnavailable
+            ? "Balance unavailable"
+            : `Your balance: $${remainingBudget.toFixed(2)}`}
         </span>
       </div>
 
+      {productsError && <Alert variant="warning">{productsError}</Alert>}
+      {balanceError && <Alert variant="warning">{balanceError}</Alert>}
       {error && <Alert variant="danger">{error}</Alert>}
 
-      <Row xs={1} sm={2} md={3} lg={4} className="g-4">
-        {products.map((product) => (
-          <Col key={product.id}>
-            <Card className="h-100">
-              <Card.Img
-                variant="top"
-                src={productImageSrc(product)}
-                alt={product.name}
-              />
-              <Card.Body className="d-flex flex-column">
-                <Card.Subtitle className="mb-1 text-muted small">
-                  {product.category}
-                </Card.Subtitle>
-                <Card.Title className="h6">{product.name}</Card.Title>
-                <Card.Text className="small text-muted flex-grow-1">
-                  {product.description}
-                </Card.Text>
-                <Card.Text className="fw-bold">
-                  ${product.price.toFixed(2)}
-                </Card.Text>
-                <Form.Group>
-                  <Form.Label className="small mb-1">Quantity</Form.Label>
-                  <Form.Control
-                    type="number"
-                    min={0}
-                    value={quantities[product.id] ?? 0}
-                    onChange={(e) =>
-                      setQuantity(product.id, Number(e.target.value))
-                    }
-                  />
-                </Form.Group>
-              </Card.Body>
-            </Card>
-          </Col>
-        ))}
-      </Row>
+      <Table striped hover responsive>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Name</th>
+            <th>Price</th>
+            <th style={{ width: "8rem" }}>Quantity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {products.map((product) => (
+            <tr key={product.itemId}>
+              <td className="text-muted">{product.category}</td>
+              <td>{product.name}</td>
+              <td>${product.price.toFixed(2)}</td>
+              <td>
+                <Form.Control
+                  type="number"
+                  min={0}
+                  size="sm"
+                  value={quantities[product.itemId] ?? 0}
+                  onChange={(e) =>
+                    setQuantity(product.itemId, Number(e.target.value))
+                  }
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
 
       <div
         className="position-fixed bottom-0 start-0 end-0 bg-white border-top py-3 shadow"
@@ -129,9 +139,9 @@ export default function ProductCatalogue({
             <div>
               Order total: <strong>${total.toFixed(2)}</strong>
             </div>
-            {overBudget && (
+            {overBudget && !balanceUnavailable && (
               <div className="text-danger small">
-                Exceeds remaining budget of ${remainingBudget.toFixed(2)}
+                Exceeds your balance of ${remainingBudget.toFixed(2)}
               </div>
             )}
           </div>

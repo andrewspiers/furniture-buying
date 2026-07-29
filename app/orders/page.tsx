@@ -1,29 +1,38 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { getRealBalance } from "@/lib/cognitivoApi";
 import OrdersView from "@/components/OrdersView";
 
 export default async function OrdersPage() {
   const session = await auth();
   const userId = session!.user.id;
 
-  const user = await prisma.user.findUniqueOrThrow({
-    where: { id: userId },
-    include: {
-      orders: {
-        orderBy: { createdAt: "desc" },
-        include: { items: { include: { product: { select: { name: true } } } } },
+  const [user, balanceResult] = await Promise.all([
+    prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      include: {
+        orders: {
+          orderBy: { createdAt: "desc" },
+          include: { items: { include: { product: { select: { name: true } } } } },
+        },
       },
-    },
-  });
+    }),
+    getRealBalance().then(
+      (balance) => ({ balance, error: null as string | null }),
+      () => ({
+        balance: null,
+        error: "Couldn't load your balance from the furniture shop API.",
+      })
+    ),
+  ]);
 
   const spent = user.orders.reduce((sum, order) => sum + order.total, 0);
-  const remaining = user.budget - spent;
 
   return (
     <OrdersView
-      budget={user.budget}
       spent={spent}
-      remaining={remaining}
+      balance={balanceResult.balance}
+      balanceError={balanceResult.error}
       orders={user.orders.map((order) => ({
         id: order.id,
         total: order.total,

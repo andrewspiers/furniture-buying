@@ -22,7 +22,11 @@ in one day, with room to grow afterwards.
 
 ### Browse the catalogue
 - A buyer can see the full list of available furniture products.
-- Each product shows a name, description, category, price, and image.
+- Each product shows its category, name, and price.
+- The catalogue is the furniture shop's own real product data, fetched
+  live from the shop's catalogue API (specifically its lightweight
+  browsing/search endpoint — the full-detail endpoint is much slower and
+  isn't used for this) — not a copy kept in this app's own database.
 
 ### Place an order
 - A buyer can select quantities of one or more products and submit them
@@ -31,20 +35,26 @@ in one day, with room to grow afterwards.
   prices at the time of purchase.
 
 ### Stay within budget
-- Each buyer has a fixed budget.
-- The app tracks how much of that budget has been spent (across all of
-  a buyer's past orders) and how much remains.
-- An order that would exceed the buyer's remaining budget must be
-  **prevented**, not merely flagged — it should not be possible to place
-  an order the buyer can't afford.
-- The buyer should be able to see their remaining budget at all times
-  while browsing and ordering.
+- The buyer's spendable balance is not tracked internally — it's the
+  real, live balance from the furniture shop's own API (the Cognitivo
+  training platform), which is the source of truth for how much the
+  buyer actually has to spend.
+- An order that would exceed that real balance must be **prevented**,
+  not merely flagged — it should not be possible to place an order the
+  buyer can't afford.
+- The buyer should be able to see their real balance at all times while
+  browsing and ordering.
+- Note: orders placed in this app currently only affect this app's own
+  order history — they are not sent to the furniture shop API, so
+  placing an order here does not deduct from the real balance shown.
+  Whether that should change (i.e. orders here actually spend real
+  balance) is an open question — see below.
 
 ### Order history
 - A buyer can view their past orders: what was ordered, when, and how
   much it cost.
-- The buyer can see a running summary of total spend vs. budget vs.
-  remaining.
+- The buyer can see a running summary of what they've spent through
+  this app, alongside their current real balance.
 
 ## Non-functional requirements
 
@@ -63,20 +73,21 @@ These were considered and deliberately deferred, not overlooked:
 
 - Payments or checkout integration (orders are recorded, not paid for
   online).
-- An admin/manager view for managing the catalogue, budgets, or users.
+- An admin/manager view for managing the catalogue or users.
 - Public self-signup, password reset, or email verification.
-- Budget periods or resets (e.g. a monthly budget that refills) — budget
-  is currently a single fixed lifetime amount per buyer.
 - Multiple buyer roles or approval workflows (e.g. a manager approving
   an order before it's placed).
+- Orders placed in this app actually deducting from the buyer's real
+  balance (see the note under "Stay within budget" above).
 
 ## Open questions for future scope
 
 Not required for Day 1, but worth revisiting if the project continues:
 
-- Should budgets reset on a schedule (monthly/quarterly) rather than
-  being a single lifetime figure?
+- Should orders placed in this app call through to the real furniture
+  shop API (`POST /orders`) so they actually affect the buyer's real
+  balance, instead of only being recorded in this app's own history?
 - Does an order ever need to be edited or cancelled after being placed?
-- Should there be a role that can add/edit/remove products, or set/adjust
-  a buyer's budget, without going directly into the database?
-- Is a shared/team budget needed, as opposed to one budget per buyer?
+- Should there be a role that can add/edit/remove products without going
+  directly into the database?
+- Is a shared/team balance needed, as opposed to one balance per buyer?

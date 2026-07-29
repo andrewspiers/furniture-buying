@@ -1,8 +1,8 @@
 "use client";
 
-import ProgressBar from "react-bootstrap/ProgressBar";
 import Card from "react-bootstrap/Card";
 import Table from "react-bootstrap/Table";
+import Alert from "react-bootstrap/Alert";
 
 type OrderItem = {
   id: string;
@@ -19,42 +19,35 @@ type Order = {
 };
 
 export default function OrdersView({
-  budget,
   spent,
-  remaining,
+  balance,
+  balanceError,
   orders,
 }: {
-  budget: number;
   spent: number;
-  remaining: number;
+  balance: number | null;
+  balanceError?: string | null;
   orders: Order[];
 }) {
-  const percentSpent = Math.min(100, (spent / budget) * 100);
-
   return (
     <div>
       <h1 className="h3 mb-4">My Orders</h1>
 
+      {balanceError && <Alert variant="warning">{balanceError}</Alert>}
+
       <Card className="mb-4">
         <Card.Body>
-          <div className="d-flex justify-content-between mb-2">
+          <div className="d-flex justify-content-between">
             <span>
-              Spent: <strong>${spent.toFixed(2)}</strong>
+              Spent through this app: <strong>${spent.toFixed(2)}</strong>
             </span>
             <span>
-              Budget: <strong>${budget.toFixed(2)}</strong>
-            </span>
-            <span>
-              Remaining:{" "}
-              <strong className={remaining < 0 ? "text-danger" : ""}>
-                ${remaining.toFixed(2)}
+              Your balance:{" "}
+              <strong>
+                {balance === null ? "unavailable" : `$${balance.toFixed(2)}`}
               </strong>
             </span>
           </div>
-          <ProgressBar
-            now={percentSpent}
-            variant={percentSpent > 90 ? "danger" : "success"}
-          />
         </Card.Body>
       </Card>
 
